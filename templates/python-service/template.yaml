@@ -1,0 +1,124 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: python-service
+  title: Python service
+  description: Python (FastAPI) REST service with Prometheus metrics, health probes, Dockerfile and CI.
+  tags: [recommended, python, service, prometheus]
+spec:
+  owner: platform-team
+  type: service
+
+  parameters:
+    - title: Service details
+      required: [name, owner]
+      properties:
+        name:
+          title: Name
+          type: string
+          description: Unique service name, also used for the repository and catalog entity.
+          pattern: '^[a-z][a-z0-9-]{1,61}[a-z0-9]$'
+          ui:autofocus: true
+          ui:help: Lowercase letters, digits and dashes (3-63 characters).
+        description:
+          title: Description
+          type: string
+          default: A new Python service.
+        owner:
+          title: Owner
+          type: string
+          description: Team that owns this service.
+          ui:field: OwnerPicker
+          ui:options:
+            catalogFilter:
+              kind: Group
+        system:
+          title: System
+          type: string
+          description: Optional system this service belongs to.
+          ui:field: EntityPicker
+          ui:options:
+            catalogFilter:
+              kind: System
+
+    - title: Repository
+      required: [repoUrl]
+      properties:
+        repoUrl:
+          title: Repository location
+          type: string
+          ui:field: RepoUrlPicker
+          ui:options:
+            allowedHosts:
+              - github.com
+              - gitlab.com
+        visibility:
+          title: Visibility
+          type: string
+          default: private
+          enum: [private, internal, public]
+
+  steps:
+    - id: fetch
+      name: Generate source code
+      action: fetch:template
+      input:
+        url: ./skeleton
+        values:
+          name: ${{ parameters.name }}
+          description: ${{ parameters.description }}
+          owner: ${{ parameters.owner }}
+          system: ${{ parameters.system }}
+          repoOwner: ${{ (parameters.repoUrl | parseRepoUrl).owner }}
+          repoName: ${{ (parameters.repoUrl | parseRepoUrl).repo }}
+          repoWebUrl: https://${{ (parameters.repoUrl | parseRepoUrl).host }}/${{ (parameters.repoUrl | parseRepoUrl).owner }}/${{ (parameters.repoUrl | parseRepoUrl).repo }}
+          sourceControl: ${{ 'github' if 'github' in (parameters.repoUrl | parseRepoUrl).host else 'gitlab' }}
+
+    - id: ci-github
+      name: Add GitHub Actions pipeline
+      if: ${{ 'github' in (parameters.repoUrl | parseRepoUrl).host }}
+      action: fetch:plain
+      input:
+        url: ./ci/github
+        targetPath: .github
+
+    - id: ci-gitlab
+      name: Add GitLab CI pipeline
+      if: ${{ 'gitlab' in (parameters.repoUrl | parseRepoUrl).host }}
+      action: fetch:plain
+      input:
+        url: ./ci/gitlab
+
+    - id: publish-github
+      name: Publish to GitHub
+      if: ${{ 'github' in (parameters.repoUrl | parseRepoUrl).host }}
+      action: publish:github
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        description: ${{ parameters.description }}
+        defaultBranch: main
+        repoVisibility: ${{ parameters.visibility }}
+
+    - id: publish-gitlab
+      name: Publish to GitLab
+      if: ${{ 'gitlab' in (parameters.repoUrl | parseRepoUrl).host }}
+      action: publish:gitlab
+      input:
+        repoUrl: ${{ parameters.repoUrl }}
+        defaultBranch: main
+        repoVisibility: ${{ parameters.visibility }}
+
+    - id: register
+      name: Register in catalog
+      action: catalog:register
+      input:
+        repoContentsUrl: ${{ steps['publish-github'].output.repoContentsUrl or steps['publish-gitlab'].output.repoContentsUrl }}
+        catalogInfoPath: /catalog-info.yaml
+
+  output:
+    links:
+      - title: Repository
+        url: ${{ steps['publish-github'].output.remoteUrl or steps['publish-gitlab'].output.remoteUrl }}
+      - title: Open in catalog
+        icon: catalog
+        entityRef: ${{ steps['register'].output.entityRef }}

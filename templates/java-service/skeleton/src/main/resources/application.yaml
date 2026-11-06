@@ -1,0 +1,27 @@
+server:
+  port: ${PORT:8080}
+  shutdown: graceful          # finish in-flight requests on SIGTERM (Kubernetes / Cloud Run)
+
+spring:
+  application:
+    name: ${{ values.name }}
+  lifecycle:
+    timeout-per-shutdown-phase: 10s
+
+app:
+  version: ${APP_VERSION:0.1.0}
+
+management:
+  endpoints:
+    web:
+      base-path: /            # expose actuator endpoints at the root ...
+      exposure:
+        include: health,prometheus
+      path-mapping:
+        prometheus: metrics   # ... so Prometheus metrics live at /metrics like the other language templates
+      discovery:
+        enabled: false
+  endpoint:
+    health:
+      probes:
+        enabled: true         # also provides /health/liveness and /health/readiness

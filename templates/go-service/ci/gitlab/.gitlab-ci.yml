@@ -1,0 +1,19 @@
+stages: [test, image]
+
+test:
+  stage: test
+  image: golang:1.24
+  script:
+    - go vet ./...
+    - go test ./...
+
+image:
+  stage: image
+  image: docker:27
+  services: [docker:27-dind]
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+    - echo "$CI_REGISTRY_PASSWORD" | docker login -u "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - docker build --build-arg APP_VERSION=$CI_COMMIT_SHORT_SHA -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA" -t "$CI_REGISTRY_IMAGE:latest" .
+    - docker push --all-tags "$CI_REGISTRY_IMAGE"

@@ -1,0 +1,11 @@
+{
+  "name": "castorx-template-tools",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local dry-run of the CastorX Backstage templates.",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "js-yaml": "^4.1.0",
+    "nunjucks": "^3.2.4"
+  }
+}

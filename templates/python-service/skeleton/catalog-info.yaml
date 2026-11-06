@@ -1,0 +1,22 @@
+apiVersion: backstage.io/v1alpha1
+kind: Component
+metadata:
+  name: ${{ values.name }}
+  description: ${{ values.description | dump }}
+  tags: [python, rest, prometheus]
+  annotations:
+{%- if values.sourceControl == 'github' %}
+    github.com/project-slug: ${{ values.repoOwner }}/${{ values.repoName }}
+{%- else %}
+    gitlab.com/project-slug: ${{ values.repoOwner }}/${{ values.repoName }}
+{%- endif %}
+  links:
+    - url: ${{ values.repoWebUrl }}
+      title: Repository
+spec:
+  type: service
+  lifecycle: experimental
+  owner: ${{ values.owner }}
+{%- if values.system %}
+  system: ${{ values.system }}
+{%- endif %}
