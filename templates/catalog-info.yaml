@@ -2,10 +2,11 @@ apiVersion: backstage.io/v1alpha1
 kind: Location
 metadata:
   name: castorx-templates
-  description: CastorX service templates
+  description: CastorX service and tenant onboarding templates
 spec:
   targets:
     - ./go-service/template.yaml
     - ./python-service/template.yaml
     - ./node-service/template.yaml
     - ./java-service/template.yaml
+    - ./tenant-onboarding/template.yaml

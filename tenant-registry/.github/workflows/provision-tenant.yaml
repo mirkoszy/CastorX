@@ -1,0 +1,97 @@
+name: Provision tenant
+
+# Started by the tenant-onboarding Backstage template.
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        required: true
+        type: string
+      repository_url:
+        required: true
+        type: string
+      gcp_auth_method:
+        description: serviceAccount (Workload Identity Federation) or key (GCP_SA_KEY environment secret)
+        required: true
+        type: string
+      gcp_service_account:
+        type: string
+      gcp_wif_provider:
+        type: string
+      gcp_parent:
+        description: organizations/<id> or folders/<id>
+        required: true
+        type: string
+      gcp_billing_account:
+        required: true
+        type: string
+      gcp_region:
+        required: true
+        type: string
+      iap_members:
+        description: Comma-separated user:<email> or group:<email>
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: tenant-${{ inputs.tenant }}
+
+env:
+  TENANT: ${{ inputs.tenant }}
+  REPOSITORY_URL: ${{ inputs.repository_url }}
+  GCP_PARENT: ${{ inputs.gcp_parent }}
+  GCP_BILLING_ACCOUNT: ${{ inputs.gcp_billing_account }}
+  GCP_REGION: ${{ inputs.gcp_region }}
+  IAP_MEMBERS: ${{ inputs.iap_members }}
+  IMAGE: ${{ vars.BACKSTAGE_IMAGE }}
+
+jobs:
+  provision:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: tenant-${{ inputs.tenant }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate inputs
+        run: scripts/provision-tenant.sh --validate
+
+      - name: Authenticate with the tenant's key
+        if: inputs.gcp_auth_method == 'key'
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Authenticate with Workload Identity Federation
+        if: inputs.gcp_auth_method == 'serviceAccount'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ inputs.gcp_wif_provider }}
+          service_account: ${{ inputs.gcp_service_account }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: beta
+
+      - uses: imjasonh/setup-crane@v0.4
+
+      - name: Provision project and install Backstage
+        run: scripts/provision-tenant.sh
+
+      - name: Commit tenant record
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add "tenants/$TENANT"
+          if git diff --cached --quiet; then
+            echo "The tenant record is unchanged."
+            exit 0
+          fi
+          git commit -m "Record tenant $TENANT"
+          git pull --rebase origin main
+          git push origin HEAD:main

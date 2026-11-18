@@ -1,0 +1,30 @@
+# Runs the official Backstage checkout in a container. Nothing is installed on the host.
+#
+#   docker compose up --build     start; open http://localhost:3000
+#   docker compose down           stop, keeping dependencies for a faster next start
+#   docker compose down -v        stop and delete everything, freeing the disk space
+services:
+  backstage:
+    build: .
+    init: true
+    ports:
+      - 127.0.0.1:3000:3000
+      - 127.0.0.1:7007:7007
+    environment:
+      NODE_OPTIONS: --no-node-snapshot
+      BROWSER: none
+      # These come from .env; see .env.example.
+      AUTH_GITHUB_CLIENT_ID: ${AUTH_GITHUB_CLIENT_ID:-}
+      AUTH_GITHUB_CLIENT_SECRET: ${AUTH_GITHUB_CLIENT_SECRET:-}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      - ../../backstage:/src:ro
+      - ../templates:/templates:ro
+      - ./app-config.local.yaml:/config/app-config.local.yaml:ro
+      - ./overlay:/overlay:ro
+      - workspace:/workspace
+      - yarn-cache:/home/node/.yarn
+
+volumes:
+  workspace:
+  yarn-cache:

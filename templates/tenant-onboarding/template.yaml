@@ -1,0 +1,144 @@
+apiVersion: scaffolder.backstage.io/v1beta3
+kind: Template
+metadata:
+  name: tenant-onboarding
+  title: Tenant onboarding
+  description: Onboard a tenant or customer. Creates a GCP project in the tenant's organization and installs their own Backstage on Cloud Run. This creates billable resources as soon as you submit.
+  tags: [tenant, onboarding, gcp]
+spec:
+  owner: platform-team
+  type: tenant
+
+  parameters:
+    - title: Tenant details
+      required: [tenantName, repositoryUrl]
+      properties:
+        tenantName:
+          title: Tenant name
+          type: string
+          description: Unique tenant or customer name, used for the catalog entity and the GCP project ID.
+          pattern: '^[a-z][a-z0-9-]{1,61}[a-z0-9]$'
+          ui:autofocus: true
+          ui:help: Lowercase letters, digits and dashes (3-63 characters).
+        repositoryUrl:
+          title: GitHub repository
+          type: string
+          description: Link to the tenant's existing repository.
+          pattern: '^https://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+$'
+          ui:help: For example https://github.com/acme/platform-config, without a trailing slash or .git.
+
+    - title: GCP project
+      description: The project is created in the tenant's organization and billed to the tenant.
+      required: [gcpParent, gcpBillingAccount, gcpRegion, iapMembers]
+      properties:
+        gcpParent:
+          title: Organization or folder
+          type: string
+          description: Where to create the project.
+          pattern: '^(organizations|folders)/[0-9]+$'
+          ui:help: For example organizations/123456789012 or folders/123456789012.
+        gcpBillingAccount:
+          title: Billing account
+          type: string
+          pattern: '^[0-9A-F]{6}-[0-9A-F]{6}-[0-9A-F]{6}$'
+          ui:help: For example 012345-6789AB-CDEF01.
+        gcpRegion:
+          title: Region
+          type: string
+          default: europe-west1
+          pattern: '^[a-z]+-[a-z]+[0-9]+$'
+        iapMembers:
+          title: Who can open Backstage
+          type: string
+          description: Comma-separated people or groups. They must belong to the tenant's Google Cloud organization.
+          pattern: '^(user|group):[^,\s]+@[^,\s]+(,(user|group):[^,\s]+@[^,\s]+)*$'
+          ui:help: For example group:platform@acme.com,user:ana@acme.com.
+
+    - title: GCP access
+      description: The service account that creates the project. See the tenant registry README for the roles it needs.
+      required: [gcpAuthMethod]
+      properties:
+        gcpAuthMethod:
+          title: How will the workflow authenticate to GCP?
+          type: string
+          default: serviceAccount
+          enum: [serviceAccount, key]
+          enumNames:
+            - Service account name (recommended, no long-lived credential)
+            - Service account key (JSON)
+      dependencies:
+        gcpAuthMethod:
+          oneOf:
+            - properties:
+                gcpAuthMethod:
+                  enum: [serviceAccount]
+                gcpServiceAccount:
+                  title: GCP service account
+                  type: string
+                  description: Full service account email.
+                  pattern: '^[a-z][a-z0-9-]{4,28}[a-z0-9]@[a-z][a-z0-9-]{4,28}[a-z0-9]\.iam\.gserviceaccount\.com$'
+                  ui:help: For example tenant-acme@acme-prod.iam.gserviceaccount.com.
+                gcpWifProvider:
+                  title: Workload Identity Federation provider
+                  type: string
+                  description: The provider the tenant created to trust the tenant registry repository.
+                  pattern: '^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$'
+                  ui:help: For example projects/123456789012/locations/global/workloadIdentityPools/castorx/providers/github.
+              required: [gcpServiceAccount, gcpWifProvider]
+            - properties:
+                gcpAuthMethod:
+                  enum: [key]
+                gcpServiceAccountKey:
+                  title: GCP service account key
+                  type: string
+                  description: Paste the contents of the JSON key file. It is stored only as an encrypted GitHub secret.
+                  # Secret keeps the value out of the task parameters and redacts it from task logs.
+                  # Read it with ${{ secrets.gcpServiceAccountKey }}; never pass it to workflowInputs,
+                  # because workflow inputs are visible in the run.
+                  ui:field: Secret
+              required: [gcpServiceAccountKey]
+
+  steps:
+    - id: store-gcp-key
+      name: Store GCP key as a GitHub secret
+      if: ${{ parameters.gcpAuthMethod == 'key' }}
+      action: github:environment:create
+      input:
+        repoUrl: github.com?owner=mirkoszy&repo=castorx-tenants
+        name: tenant-${{ parameters.tenantName }}
+        # Only workflows running from main can read the key.
+        deploymentBranchPolicy:
+          protected_branches: false
+          custom_branch_policies: true
+        customBranchPolicyNames: [main]
+        secrets:
+          GCP_SA_KEY: ${{ secrets.gcpServiceAccountKey }}
+
+    - id: provision
+      name: Start tenant provisioning
+      action: github:actions:dispatch
+      input:
+        repoUrl: github.com?owner=mirkoszy&repo=castorx-tenants
+        workflowId: provision-tenant.yaml
+        branchOrTagName: main
+        returnWorkflowRunDetails: true
+        workflowInputs:
+          tenant: ${{ parameters.tenantName }}
+          repository_url: ${{ parameters.repositoryUrl }}
+          gcp_auth_method: ${{ parameters.gcpAuthMethod }}
+          gcp_service_account: ${{ parameters.gcpServiceAccount }}
+          gcp_wif_provider: ${{ parameters.gcpWifProvider }}
+          gcp_parent: ${{ parameters.gcpParent }}
+          gcp_billing_account: ${{ parameters.gcpBillingAccount }}
+          gcp_region: ${{ parameters.gcpRegion }}
+          iap_members: ${{ parameters.iapMembers }}
+
+  output:
+    links:
+      - title: Follow the provisioning run
+        url: ${{ steps['provision'].output.workflowRunHtmlUrl }}
+      - title: Tenant repository
+        url: ${{ parameters.repositoryUrl }}
+    text:
+      - title: What happens next
+        content: Provisioning usually takes 15-30 minutes. The tenant's Backstage URL appears in the run summary when it finishes.

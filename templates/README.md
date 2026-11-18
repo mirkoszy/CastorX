@@ -37,6 +37,52 @@ graceful `SIGTERM` shutdown, a Dockerfile, a CI pipeline and a `catalog-info.yam
 The GitHub workflow is stored without the `.github` prefix so this templates repo does not run
 it as its own workflow. The template copies it into `.github/` of the generated repo.
 
+## Tenant onboarding template
+
+`tenant-onboarding` registers a tenant or customer. It does not create a repository or any GCP resources.
+
+**Asks for**: tenant name, a link to the tenant's existing GitHub repository, and either a GCP service
+account email (recommended) or a service account JSON key.
+
+**What a run does**:
+
+1. Opens a pull request on the tenant registry repository, adding `tenants/<tenant>/catalog-info.yaml`
+   (a catalog `Resource` of type `tenant`). The tenant appears in the catalog once the pull request merges.
+2. If a key was supplied, stores it as the `GCP_SA_KEY` secret in the `tenant-<tenant>` GitHub environment
+   on the registry repository, readable only by workflows running from `main`. A workflow reads it with:
+
+   ```yaml
+   jobs:
+     deploy:
+       environment: tenant-acme
+       steps:
+         - uses: google-github-actions/auth@v2
+           with:
+             credentials_json: ${{ secrets.GCP_SA_KEY }}
+   ```
+
+The key never reaches the pull request or the generated files, and Backstage redacts it from task logs.
+To rotate a key, run the template again for the same tenant. The key's format is not validated, so a
+malformed key only fails when a workflow uses it.
+
+**Setup**:
+
+1. Create the registry as a **private** repository, because tenant records name your customers.
+   `mirkoszy/castorx-tenants` is a placeholder; change it in both steps of `tenant-onboarding/template.yaml`.
+   Secrets in environments of a private repository need a paid GitHub plan.
+2. Give the scaffolder's GitHub token permission to push branches, open pull requests and administer
+   the registry repository (creating environments and secrets requires admin access).
+3. Add the registry to `app-config.yaml` so merged tenants reach the catalog:
+
+   ```yaml
+   catalog:
+     locations:
+       - type: url
+         target: https://github.com/<org>/<registry-repo>/blob/main/tenants/*/catalog-info.yaml
+         rules:
+           - allow: [Resource]
+   ```
+
 ## Local testing
 
 The `Makefile` renders a template the way the Backstage scaffolder does (`tools/scaffold.js`:
@@ -66,7 +112,7 @@ anyone uses them in Backstage.
 ## Install in Backstage
 
 1. Push this folder to a repository Backstage can read.
-2. Register `catalog-info.yaml` (a `Location` pointing at all four templates), either in the UI
+2. Register `catalog-info.yaml` (a `Location` pointing at all the templates), either in the UI
    (*Create… → Register existing component*) or in `app-config.yaml`:
 
    ```yaml
@@ -86,5 +132,6 @@ anyone uses them in Backstage.
 
 ## Placeholders to adjust
 
-- `spec.owner: platform-team` in each `template.yaml`: set it to your platform team's group.
+- `spec.owner: platform-team` in each `template.yaml`: set it to your platform team's group. `tenant-onboarding` also sets it as the owner of each tenant, in its `fetch` step.
+- `mirkoszy/castorx-tenants` in `tenant-onboarding/template.yaml`: the tenant registry repository.
 - `node-service` ships without `package-lock.json`. Generated repos create one on the first `npm install`; commit it.
