@@ -1,0 +1,41 @@
+# Runs on Cloud Run behind IAP. The values come from environment variables
+# set by tenant-registry/scripts/provision-tenant.sh.
+app:
+  baseUrl: ${APP_BASE_URL}
+
+backend:
+  baseUrl: ${APP_BASE_URL}
+  listen: ':7007'
+  cors:
+    origin: ${APP_BASE_URL}
+  auth:
+    keys:
+      - secret: ${BACKEND_SECRET}
+  database:
+    client: pg
+    connection:
+      # On Cloud Run this is the Cloud SQL socket directory, /cloudsql/<instance connection name>.
+      host: ${POSTGRES_HOST}
+      port: 5432
+      user: ${POSTGRES_USER}
+      password: ${POSTGRES_PASSWORD}
+    # Backstage opens a pool per plugin, so keep each one small for a small instance.
+    knexConfig:
+      pool:
+        min: 0
+        max: 3
+
+auth:
+  environment: production
+  providers:
+    gcpIap:
+      audience: ${IAP_AUDIENCE}
+      signIn:
+        resolvers:
+          # IAP already limits who can reach this service, and a new tenant has no users in its catalog yet.
+          - resolver: emailMatchingUserEntityProfileEmail
+            dangerouslyAllowSignInWithoutUserInCatalog: true
+
+catalog:
+  # Replaces the example data from app-config.yaml.
+  locations: []

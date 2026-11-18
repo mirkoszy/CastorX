@@ -68,17 +68,35 @@ const template = yaml.load(fs.readFileSync(path.join(templateDir, 'template.yaml
 const params = JSON.parse(paramsJson);
 const pages = [].concat(template.spec.parameters || []);
 const errors = [];
-for (const page of pages) {
-  for (const [key, schema] of Object.entries(page.properties || {})) {
+const secrets = {};
+
+function validate(section) {
+  for (const [key, schema] of Object.entries(section.properties || {})) {
     if (params[key] === undefined && schema.default !== undefined) params[key] = schema.default;
     const v = params[key];
-    if ((page.required || []).includes(key) && (v === undefined || v === '')) errors.push(`${key}: required`);
+    if ((section.required || []).includes(key) && (v === undefined || v === '')) errors.push(`${key}: required`);
+    if (schema['ui:field'] === 'Secret') {
+      // Backstage's Secret field moves the value to the secrets context and masks the parameter.
+      if (typeof v === 'string' && v !== '') {
+        secrets[key] = v;
+        params[key] = '*'.repeat(v.length);
+      }
+      continue;
+    }
     if (typeof v === 'string' && v !== '' && schema.pattern && !new RegExp(schema.pattern).test(v)) {
       errors.push(`${key}: "${v}" does not match ${schema.pattern}`);
     }
     if (v !== undefined && schema.enum && !schema.enum.includes(v)) errors.push(`${key}: must be one of ${schema.enum.join(', ')}`);
   }
+  // Conditional fields: apply the oneOf branch selected by the controlling parameter.
+  for (const [key, dependency] of Object.entries(section.dependencies || {})) {
+    const branch = (dependency.oneOf || []).find((b) => b.properties?.[key]?.enum?.includes(params[key]));
+    if (branch) validate({ required: branch.required, properties: omit(branch.properties, key) });
+  }
 }
+const omit = (obj, key) => Object.fromEntries(Object.entries(obj).filter(([k]) => k !== key));
+
+pages.forEach(validate);
 if (errors.length) {
   console.error(`Invalid parameters for ${template.metadata.name}:\n  ${errors.join('\n  ')}`);
   process.exit(1);
@@ -98,7 +116,7 @@ console.log(`Template ${template.metadata.name}`);
 console.log(`  parameters ${JSON.stringify(params)}`);
 const steps = {};
 for (const step of template.spec.steps) {
-  const ctx = { parameters: params, steps };
+  const ctx = { parameters: params, secrets, steps };
   if (step.if !== undefined) {
     const cond = render(step.if, ctx);
     if (!cond || cond === 'false') { console.log(`  skip  ${step.id}`); continue; }
@@ -130,6 +148,20 @@ for (const step of template.spec.steps) {
       console.log(`        would publish ${web} (${input.repoVisibility || 'default'} visibility)`);
       break;
     }
+    case 'publish:github:pull-request': {
+      const u = new URL(`https://${input.repoUrl}`);
+      const web = `https://${u.host}/${u.searchParams.get('owner')}/${u.searchParams.get('repo')}`;
+      steps[step.id] = { output: { remoteUrl: `${web}/pull/0` } };
+      console.log(`        would open a pull request on ${web}: "${input.title}" (${input.branchName} -> ${input.targetPath || '/'})`);
+      break;
+    }
+    case 'github:actions:dispatch':
+      steps[step.id] = { output: { workflowRunHtmlUrl: 'https://github.com/example/runs/0' } };
+      console.log(`        would start ${input.workflowId} on ${input.repoUrl} (${input.branchOrTagName}) with ${JSON.stringify(input.workflowInputs)}`);
+      break;
+    case 'github:environment:create':
+      console.log(`        would set environment "${input.name}" on ${input.repoUrl}, secrets: ${Object.keys(input.secrets || {}).join(', ') || 'none'}`);
+      break;
     case 'catalog:register':
       steps[step.id] = { output: { entityRef: `component:default/${params.name}` } };
       console.log(`        would register ${input.repoContentsUrl}${input.catalogInfoPath || '/catalog-info.yaml'}`);
@@ -145,6 +177,12 @@ const leftovers = walk(outDir).filter((f) => !f.includes(`${path.sep}.github${pa
   .filter((f) => /\$\{\{|\{%/.test(fs.readFileSync(f, 'utf8')) || /\$\{\{/.test(f));
 if (leftovers.length) {
   console.error(`Unrendered template syntax left in:\n  ${leftovers.join('\n  ')}`);
+  process.exit(1);
+}
+const leaks = walk(outDir).filter((f) => Object.values(secrets)
+  .some((secret) => fs.readFileSync(f, 'utf8').includes(secret)));
+if (leaks.length) {
+  console.error(`Secret value written to generated files:\n  ${leaks.join('\n  ')}`);
   process.exit(1);
 }
 const catalogFile = path.join(outDir, 'catalog-info.yaml');

@@ -1,0 +1,13 @@
+# Loaded on top of Backstage's own app-config.yaml.
+app:
+  listen:
+    # Inside a container the frontend must accept connections from outside it.
+    host: 0.0.0.0
+
+catalog:
+  # This replaces the demo locations from app-config.yaml.
+  locations:
+    - type: file
+      target: /templates/catalog-info.yaml
+      rules:
+        - allow: [Template, Location]
